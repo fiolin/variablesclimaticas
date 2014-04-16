@@ -1,1 +1,79 @@
-https://github.com/fiolin/Xively.git
+
+#include <SPI.h>
+#include <Ethernet.h>
+#include <HttpClient.h>
+#include <Xively.h>
+#include "DHT.h"
+#include <Wire.h>
+#include <BMP085.h>
+
+#define DHTPIN 3     // PIN data of DHT22
+
+#define DHTTYPE DHT11   // DHT 11
+
+//#define DHTTYPE DHT21   // DHT 21 (AM2301)
+DHT dht(DHTPIN, DHTTYPE);
+// MAC address for your Ethernet shield
+byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
+
+// Your Xively key to let you upload data
+char xivelyKey[] = "HdE9lurRfl7tdWdrDGz4idw6JTjjtupeQH4sgnry9sgq7w8V";
+#define xivelyFeed 734848719
+unsigned long feedId = 734848719;
+//char mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
+// Define the strings for our datastream IDs
+char sensorId1[] = "Temperatura";
+char sensorId2[] = "Humedad";
+char sensorId3[] = "Presion";
+XivelyDatastream datastreams[] = {
+  XivelyDatastream(sensorId1, strlen(sensorId1), DATASTREAM_FLOAT),
+  XivelyDatastream(sensorId2, strlen(sensorId2), DATASTREAM_FLOAT),
+  XivelyDatastream(sensorId3, strlen(sensorId3), DATASTREAM_FLOAT)
+};
+// Finally, wrap the datastreams into a feed. Set the Feed value insted of 12345678
+XivelyFeed feed(feedId, datastreams, 3 /* number of datastreams */);
+
+EthernetClient client;
+XivelyClient xivelyclient(client);
+
+
+void setup() {
+  Serial.begin(9600);
+  Serial.println("Starting single datastream upload to Xively...");
+  Serial.println();
+  dht.begin();
+  Wire.begin();
+  bmp085Calibration();
+  while (Ethernet.begin(mac) != 1)
+  {
+    Serial.println("Error getting IP address via DHCP, trying again...");
+    delay(15000);
+  }
+  Serial.print("server is at ");
+  Serial.println(Ethernet.localIP());
+}
+
+void loop() {
+  float h = dht.readHumidity(); // Value of Temp
+  float t = dht.readTemperature(); // Value of Humidity
+  float temperature = bmp085GetTemperature(bmp085ReadUT()); //MUST be called first
+  float pressure = bmp085GetPressure(bmp085ReadUP());
+  float atm = pressure / 101325; // "standard atmosphere"
+  float altitude = calcAltitude(pressure); //Uncompensated caculation - in Meters
+ pressure=pressure/100+14;
+  datastreams[0].setFloat(t); // Value of Temp
+  datastreams[1].setFloat(h); // Value of Humidity
+  datastreams[2].setFloat(pressure); // Value of Pressure
+  Serial.print("Read sensor value ");
+  Serial.println(datastreams[0].getFloat());
+  Serial.println(datastreams[1].getFloat());
+  Serial.println(datastreams[2].getFloat());
+  Serial.println("Uploading it to Xively");
+  // Send data to Xively
+  int ret = xivelyclient.put(feed, xivelyKey);
+  Serial.print("xivelyclient.put returned ");
+  Serial.println(ret);
+  delay(15000);
+}
+
+
