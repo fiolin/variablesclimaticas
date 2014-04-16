@@ -6,7 +6,12 @@
 #include "DHT.h"
 #include <Wire.h>
 #include <BMP085.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
 
+#define ONE_WIRE_BUS 2 /*-(Connect to Pin 2 )-*/
+OneWire ourWire(ONE_WIRE_BUS);
+DallasTemperature sensors(&ourWire);
 #define DHTPIN 3     // PIN data of DHT22
 
 #define DHTTYPE DHT11   // DHT 11
@@ -15,23 +20,35 @@
 DHT dht(DHTPIN, DHTTYPE);
 // MAC address for your Ethernet shield
 byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
+float temperaturaMax=0;
+float temperaturaMin=100;
 
 // Your Xively key to let you upload data
 char xivelyKey[] = "HdE9lurRfl7tdWdrDGz4idw6JTjjtupeQH4sgnry9sgq7w8V";
 #define xivelyFeed 734848719
 unsigned long feedId = 734848719;
-//char mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
+
 // Define the strings for our datastream IDs
 char sensorId1[] = "Temperatura";
 char sensorId2[] = "Humedad";
 char sensorId3[] = "Presion";
+char sensorId4[] = "Punto_de_Rocio";
+char sensorId5[] = "Luminosidad";
+char sensorId6[] = "Temperatura_Max";
+char sensorId7[] = "Temperatura_Min";
+
 XivelyDatastream datastreams[] = {
   XivelyDatastream(sensorId1, strlen(sensorId1), DATASTREAM_FLOAT),
   XivelyDatastream(sensorId2, strlen(sensorId2), DATASTREAM_FLOAT),
-  XivelyDatastream(sensorId3, strlen(sensorId3), DATASTREAM_FLOAT)
+  XivelyDatastream(sensorId3, strlen(sensorId3), DATASTREAM_FLOAT),
+  XivelyDatastream(sensorId4, strlen(sensorId4), DATASTREAM_FLOAT),
+  XivelyDatastream(sensorId5, strlen(sensorId5), DATASTREAM_FLOAT),
+  XivelyDatastream(sensorId6, strlen(sensorId6), DATASTREAM_FLOAT),
+  XivelyDatastream(sensorId7, strlen(sensorId7), DATASTREAM_FLOAT)
+  
 };
 // Finally, wrap the datastreams into a feed. Set the Feed value insted of 12345678
-XivelyFeed feed(feedId, datastreams, 3 /* number of datastreams */);
+XivelyFeed feed(feedId, datastreams, 7 /* number of datastreams */);
 
 EthernetClient client;
 XivelyClient xivelyclient(client);
@@ -44,6 +61,7 @@ void setup() {
   dht.begin();
   Wire.begin();
   bmp085Calibration();
+  sensors.begin();
   while (Ethernet.begin(mac) != 1)
   {
     Serial.println("Error getting IP address via DHCP, trying again...");
@@ -54,20 +72,33 @@ void setup() {
 }
 
 void loop() {
-  float h = dht.readHumidity(); // Value of Temp
-  float t = dht.readTemperature(); // Value of Humidity
-  float temperature = bmp085GetTemperature(bmp085ReadUT()); //MUST be called first
-  float pressure = bmp085GetPressure(bmp085ReadUP());
-  float atm = pressure / 101325; // "standard atmosphere"
-  float altitude = calcAltitude(pressure); //Uncompensated caculation - in Meters
- pressure=pressure/100+14;
+  float val_luz=0;
+  float val_pressure=900;
+  float t = 1;
+  
+  float h = dht.readHumidity(); // Value of humedad
+  //float t = dht.readTemperature(); // Value of Humidity
+   
+  t= leer_temperatura(1); //obtiene la temperatura
+  val_pressure= leer_presion(900);  //obtiene la prasion en hpa
+  val_luz= leer_ldr(0);//obtiene la luminosidad
+  getTemperatura();//obtiene maximo y minimos de la temperatura
+  
   datastreams[0].setFloat(t); // Value of Temp
   datastreams[1].setFloat(h); // Value of Humidity
-  datastreams[2].setFloat(pressure); // Value of Pressure
+  datastreams[2].setFloat(val_pressure); // Value of Pressure
+  datastreams[3].setFloat(dewPoint(t, h));//punto de rocio
+  datastreams[4].setFloat(val_luz);//Luminosidad
+  datastreams[5].setFloat(temperaturaMax);
+  datastreams[6].setFloat(temperaturaMin);
+  
   Serial.print("Read sensor value ");
   Serial.println(datastreams[0].getFloat());
   Serial.println(datastreams[1].getFloat());
   Serial.println(datastreams[2].getFloat());
+  Serial.println(datastreams[3].getFloat());
+  Serial.println(datastreams[4].getFloat());
+  
   Serial.println("Uploading it to Xively");
   // Send data to Xively
   int ret = xivelyclient.put(feed, xivelyKey);
@@ -75,5 +106,49 @@ void loop() {
   Serial.println(ret);
   delay(15000);
 }
-
-
+//////////////////////////////////////////////////////////////////////////////////////////
+double dewPoint(double celsius, double humidity)
+{
+        double A0= 373.15/(273.15 + celsius);
+        double SUM = -7.90298 * (A0-1);
+        SUM += 5.02808 * log10(A0);
+        SUM += -1.3816e-7 * (pow(10, (11.344*(1-1/A0)))-1) ;
+        SUM += 8.1328e-3 * (pow(10,(-3.49149*(A0-1)))-1) ;
+        SUM += log10(1013.246);
+        double VP = pow(10, SUM-3) * humidity;
+        double T = log(VP/0.61078);   // temp var
+        return (241.88 * T) / (17.558-T);
+}
+//////////////////////////////////////////////////////////////////////////////////////////
+void getTemperatura(){
+  float temperaturaActual=sensors.getTempCByIndex(0);
+ if (temperaturaMax <temperaturaActual) temperaturaMax= temperaturaActual;
+ if (temperaturaMin > temperaturaActual) temperaturaMin=temperaturaActual;
+  
+}
+////////////////////////////////////////////////////////////////////////////////////////
+float leer_ldr(float val)
+{
+  val= analogRead(3);
+  val= map (val, 20, 1024, 0, 100); 
+  if(val<0) val=0;
+  return val;
+}
+/////////////////////////////////////////////////////////////////////////////////////////
+float leer_presion(float presion)
+{
+ float temperature = bmp085GetTemperature(bmp085ReadUT()); //MUST be called first
+ float pressure = bmp085GetPressure(bmp085ReadUP());
+ float atm = pressure / 101325; // "standard atmosphere"
+  //float altitude = calcAltitude(pressure); //Uncompensated caculation - in Meters
+  presion=pressure/100+14; 
+  return presion;
+}
+///////////////////////////////////////////////////////////////////////////////////////
+float leer_temperatura(float temperatura)
+{
+ sensors.requestTemperatures(); 
+temperatura = sensors.getTempCByIndex(0); // Valor de temperatura
+return temperatura;
+  
+}
